@@ -1,0 +1,7 @@
+name: telegram-memory-approval
+version: 0.1.0
+description: Owner-only per-entry native memory approval over existing Telegram gateway
+kind: standalone
+license: MIT
+python_dependencies:
+  - python-telegram-bot>=20,<23

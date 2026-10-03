@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-telegram-memory-approval"
+version = "0.1.0"
+description = "Owner-only entry-level Telegram approval for native Hermes memory"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["python-telegram-bot>=20,<23"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "ruamel.yaml>=0.18", "python-dotenv>=1", "build"]
+
+[project.entry-points."hermes_agent.plugins"]
+telegram-memory-approval = "telegram_memory_approval.plugin:register"
+
+[tool.setuptools.packages.find]
+include = ["telegram_memory_approval*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["."]
