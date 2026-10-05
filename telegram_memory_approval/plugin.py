@@ -33,19 +33,51 @@ def register(ctx):
         except OSError:
             lock.close()
             raise RuntimeError("Another approval transport owns this profile")
-        store = Store(path / 'proposals.sqlite3')
-        store.recover()
-        service = Service(bridge, store, application.bot, owner, chat, topic,
-                          ready=lambda: adapter.is_connected and application.running)
-        handler = CallbackQueryHandler(service.callback, pattern=PATTERN)
-        application.add_handler(handler)
-        task = ctx.spawn_task(service.run(interval), name='telegram-memory-approval:poll')
+        store = None
+        handler = None
+        task = None
+        coro = None
+        try:
+            store = Store(path / 'proposals.sqlite3')
+            store.recover()
+            service = Service(bridge, store, application.bot, owner, chat, topic,
+                              ready=lambda: adapter.is_connected and application.running)
+            handler = CallbackQueryHandler(service.callback, pattern=PATTERN)
+            application.add_handler(handler)
+            coro = service.run(interval)
+            task = ctx.spawn_task(coro, name='telegram-memory-approval:poll')
+        except BaseException:
+            if coro is not None and task is None:
+                coro.close()
+            try:
+                if handler is not None:
+                    application.remove_handler(handler)
+            finally:
+                try:
+                    if store is not None:
+                        store.close()
+                finally:
+                    lock.close()
+            raise
+
+        def release(_task):
+            try:
+                store.close()
+            finally:
+                lock.close()
 
         def close():
-            task.cancel()
-            application.remove_handler(handler)
-            store.close()
-            lock.close()
-        ctx.on_unload(close)
+            try:
+                application.remove_handler(handler)
+            finally:
+                # Keep the ledger and profile lock until an in-flight send has
+                # observed cancellation and recorded its uncertain outcome.
+                task.add_done_callback(release)
+                task.cancel()
+        try:
+            ctx.on_unload(close)
+        except BaseException:
+            close()
+            raise
 
     ctx.register_telegram_handler(wire)

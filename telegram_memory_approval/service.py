@@ -45,19 +45,25 @@ class Service:
                     text="Полная запись показана выше. Сохранить или отклонить это изменение?",
                     parse_mode=None, reply_markup=keyboard, disable_notification=True)
                 self.store.transition(token, 'sending', 'active', message=card.message_id)
+            except asyncio.CancelledError:
+                self.store.transition(token, 'sending', 'uncertain', detail='Delivery cancelled')
+                raise
             except Exception as exc:
                 self.store.transition(token, 'sending', 'uncertain', detail=type(exc).__name__)
                 log.exception("Delivery uncertain; no automatic retry for %s", token)
 
     async def callback(self, update, context):
         q = update.callback_query
-        match = re.fullmatch(PATTERN, q.data or '')
+        if q is None:
+            return
+        match = re.fullmatch(PATTERN, q.data) if isinstance(q.data, str) else None
         row = self.store.get(match[1]) if match else None
         msg = q.message
         if (not row or not msg or row['owner'] != self.owner or
             row['chat'] != self.chat or row['topic'] != self.topic or
             q.from_user.id != row['owner'] or
-            msg.chat.id != row['chat'] or getattr(msg, 'message_thread_id', None) != row['topic'] or
+            msg.chat.id != row['chat'] or
+            (getattr(msg, 'message_thread_id', None) or 1) != (row['topic'] or 1) or
             msg.message_id != row['message'] or row['state'] != 'active'):
             await q.answer("Нет доступа, другая карточка/тема или решение уже принято.", show_alert=True)
             return
@@ -77,7 +83,7 @@ class Service:
             if match[2] == 'reject':
                 state, detail = 'rejected', 'Rejected by owner; native pending retained for audit'
             else:
-                payload = validate(json.loads(row['record']))
+                validate(json.loads(row['record']))
                 result = self.bridge.apply(json.loads(row["record"])["payload"])
                 state = 'saved' if result.get('success') is True else 'refused'
                 detail = json.dumps(result, ensure_ascii=False)

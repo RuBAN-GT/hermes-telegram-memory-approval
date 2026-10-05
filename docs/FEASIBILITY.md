@@ -1,6 +1,10 @@
 # Compatibility evidence and contract
 
-Source: Hermes revision `8ffb3c655000f57f489a93cd2b32b5b71dc5c2e4`.
+Baseline source: Hermes revision `8ffb3c655000f57f489a93cd2b32b5b71dc5c2e4`.
+The line references below describe that baseline. Also verified against
+`802e0b1daebad8a60da496db1a070fe13ddc45bd` with Python 3.11 and PTB 22.8:
+53 tests pass, including directory loading, cancelled delivery quarantine,
+resource cleanup after factory failure and General topic callbacks.
 
 | Public surface | Source |
 | --- | --- |

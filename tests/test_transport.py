@@ -314,3 +314,127 @@ def test_unready_transport_does_not_claim_pending(setup):
     asyncio.run(service.scan())
     assert len(bot.messages) == 2
     assert store.get(token(store))['state'] == 'active'
+
+
+@pytest.mark.parametrize('incoming_topic', [None, 1])
+def test_general_topic_accepts_telegram_thread_one(setup, incoming_topic):
+    service, bot, store = setup
+    service.topic = None
+    stage()
+    asyncio.run(service.scan())
+    click(service, Query(token(store), topic=incoming_topic))
+    assert store.get(token(store))['state'] == 'saved'
+
+
+def test_cancelled_delivery_is_quarantined(setup):
+    service, bot, store = setup
+    stage()
+    async def run():
+        sending = asyncio.Event()
+        async def blocked_send(**kwargs):
+            sending.set()
+            await asyncio.Future()
+        bot.send_message = blocked_send
+        task = asyncio.create_task(service.scan())
+        await sending.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    asyncio.run(run())
+    assert store.get(token(store))['state'] == 'uncertain'
+    asyncio.run(service.scan())
+    assert not bot.messages
+
+
+def test_unload_keeps_lock_until_cancelled_send_finishes(setup):
+    import fcntl
+    from telegram_memory_approval import plugin
+    service, bot, store = setup
+    callbacks = []
+    factories = []
+    ctx = NS(get_config=lambda key, default=None: {
+        'owner_user_id': 42, 'fallback_chat_id': -100, 'fallback_topic_id': 7,
+    }.get(key, default), register_telegram_handler=factories.append,
+        spawn_task=lambda coro, **kwargs: asyncio.create_task(coro),
+        on_unload=callbacks.append)
+    plugin.register(ctx)
+    stage()
+    class App:
+        running = True
+        def __init__(self):
+            self.bot, self.handlers = bot, []
+        def add_handler(self, handler):
+            self.handlers.append(handler)
+        def remove_handler(self, handler):
+            self.handlers.remove(handler)
+    async def run():
+        sending = asyncio.Event()
+        cancelled = asyncio.Event()
+        finish = asyncio.Event()
+        async def blocked_send(**kwargs):
+            sending.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+                await finish.wait()
+                raise
+        bot.send_message = blocked_send
+        app = App()
+        factories[0](app, NS(is_connected=True))
+        await sending.wait()
+        callbacks[0]()
+        await cancelled.wait()
+        assert not app.handlers
+        from hermes_constants import get_hermes_home
+        path = get_hermes_home() / 'plugin-state' / 'telegram-memory-approval'
+        with (path / 'runtime.lock').open('a') as lock:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finish.set()
+            # Drain cancellation, then the task's resource-release callback.
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        reopened = Store(path / 'proposals.sqlite3')
+        try:
+            assert reopened.get(token(reopened))['state'] == 'uncertain'
+        finally:
+            reopened.close()
+    asyncio.run(run())
+
+
+def test_factory_failure_releases_profile_lock(setup):
+    from telegram_memory_approval import plugin
+    factories = []
+    callbacks = []
+    fail = [True]
+    def spawn(coro, **kwargs):
+        if fail[0]:
+            raise RuntimeError('Cannot spawn')
+        return asyncio.create_task(coro)
+    ctx = NS(get_config=lambda key, default=None: {
+        'owner_user_id': 42, 'fallback_chat_id': -100,
+    }.get(key, default), register_telegram_handler=factories.append,
+        spawn_task=spawn, on_unload=callbacks.append)
+    plugin.register(ctx)
+    class App:
+        bot = setup[1]
+        running = False
+        def __init__(self):
+            self.handlers = []
+        def add_handler(self, handler):
+            self.handlers.append(handler)
+        def remove_handler(self, handler):
+            self.handlers.remove(handler)
+    async def run():
+        app = App()
+        with pytest.raises(RuntimeError, match='Cannot spawn'):
+            factories[0](app, NS(is_connected=False))
+        assert not app.handlers
+        fail[0] = False
+        factories[0](app, NS(is_connected=False))
+        callbacks[0]()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    asyncio.run(run())

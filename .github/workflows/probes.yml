@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: python -m pip install 'pytest>=8,<10' 'ruamel.yaml>=0.18' 'python-dotenv>=1'
+      - run: python -m pip install -e '.[test]'
       - run: python -m compileall -q tests
       - run: python -m pytest -q tests --tb=short
         env:

@@ -1,7 +1,26 @@
 name: telegram-memory-approval
+label: Telegram Memory Approval
 version: 0.1.0
 description: Owner-only per-entry native memory approval over existing Telegram gateway
 kind: standalone
 license: MIT
+author: RuBAN-GT
+homepage: https://github.com/RuBAN-GT/hermes-telegram-memory-approval
+tags: [telegram, memory, approval]
+platforms: [telegram]
 python_dependencies:
   - python-telegram-bot>=20,<23
+config_schema:
+  owner_user_id:
+    type: int
+    description: Numeric Telegram user ID allowed to approve changes (required)
+  fallback_chat_id:
+    type: int
+    description: Numeric destination chat ID; negative for groups (required)
+  fallback_topic_id:
+    type: int
+    description: Forum topic ID; omit for General or private chats
+  poll_seconds:
+    type: float
+    default: 5
+    description: Pending scan interval in seconds (1–300)

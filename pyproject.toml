@@ -10,6 +10,11 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = ["python-telegram-bot>=20,<23"]
 
+[project.urls]
+Homepage = "https://github.com/RuBAN-GT/hermes-telegram-memory-approval"
+Repository = "https://github.com/RuBAN-GT/hermes-telegram-memory-approval"
+Issues = "https://github.com/RuBAN-GT/hermes-telegram-memory-approval/issues"
+
 [project.optional-dependencies]
 test = ["pytest>=8,<10", "ruamel.yaml>=0.18", "python-dotenv>=1", "build"]
 

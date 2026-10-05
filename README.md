@@ -1,5 +1,7 @@
 # Hermes Telegram Memory Approval
 
+[![tests](https://github.com/RuBAN-GT/hermes-telegram-memory-approval/actions/workflows/ci.yml/badge.svg)](https://github.com/RuBAN-GT/hermes-telegram-memory-approval/actions/workflows/ci.yml)
+
 Deployable Python plugin for **entry-level** review of Hermes' native MEMORY.md
 and USER.md proposals in the existing Telegram gateway. No second bot, polling
 client, core patches, private memory locks, or prompt-cache mutation.
@@ -25,7 +27,9 @@ client, core patches, private memory locks, or prompt-cache mutation.
 ## Compatibility and installation
 
 Verified against Hermes source revision
-`8ffb3c655000f57f489a93cd2b32b5b71dc5c2e4`, Python 3.11 and PTB 22.8.
+`802e0b1daebad8a60da496db1a070fe13ddc45bd`, Python 3.11 and PTB 22.8.
+CI also tests Python 3.12/3.13; a separate workflow checks the earlier
+`8ffb3c655000f57f489a93cd2b32b5b71dc5c2e4` compatibility baseline.
 Requires Unix `fcntl`, native pending/pinned replay APIs, an **in-process** plugin
 runtime and Telegram gateway. Host-isolated plugins cannot receive the native PTB
 Application. This transport covers only native memory, not OpenViking, skills,
@@ -36,11 +40,10 @@ change configuration or enable itself. Select the intended profile first and
 verify `HERMES_HOME`. Native staging is the safety gate, not a fail-open middleware.
 
 ```bash
+# Install directly from the repository, but configure before enabling.
+hermes plugins install https://github.com/RuBAN-GT/hermes-telegram-memory-approval --no-enable
 hermes config set memory.write_approval true
 hermes config set plugins.isolation in_process
-# Local directory installation (copy the WHOLE repo including package and manifest):
-mkdir -p "$HERMES_HOME/plugins/telegram-memory-approval"
-cp -R /path/to/this/repo/. "$HERMES_HOME/plugins/telegram-memory-approval/"
 hermes config set plugins.entries.telegram-memory-approval.settings.owner_user_id 123456789
 hermes config set plugins.entries.telegram-memory-approval.settings.fallback_chat_id -1001234567890
 # Optional: omit topic setting for General/private chat; set a real topic ID otherwise.
@@ -49,20 +52,50 @@ hermes config set plugins.entries.telegram-memory-approval.settings.poll_seconds
 hermes plugins enable telegram-memory-approval
 ```
 
-After copying/installing a directory plugin, run `hermes pm repair` for plugin dependencies. **Hot reload is not supported:** native factory deduplication requires a full gateway restart after installation, disable/enable or code changes. An adapter Application rebuild also requires a full gateway restart for this transport; ordinary startup is readiness-gated through public adapter and Application state.
+Use your own numeric Telegram user/chat IDs, not the example values. The owner
+must be able to read the configured destination, and the existing gateway bot
+must be able to send there. All approved memory text is visible to that chat's
+members: prefer a private chat or a restricted group.
+
+The installer may ask for consent to install the declared Python dependency.
+Do not skip dependency preparation. If dependencies need repair, run
+`hermes pm repair`. **Hot reload is not supported:** native factory deduplication
+requires a full gateway restart after installation, disable/enable or code changes.
+An adapter Application rebuild also requires a full gateway restart for this
+transport; ordinary startup is readiness-gated through public adapter and
+Application state. Setting `plugins.isolation` affects all plugins in the profile;
+only run trusted plugins in-process.
 
 Restart the existing Telegram gateway using your installation's normal service
 manager. Check plugin logs and a synthetic proposal before trusting production.
 The manifest declares PTB; ensure plugin dependency preparation succeeds. Alternatively,
 install the wheel into a disposable Hermes environment: its
 `hermes_agent.plugins` entry point registers the same plugin. Do not install both
-forms simultaneously. Once published, Hermes' repository installer can install
-this directory package. No GitHub URL is invented here.
+forms simultaneously. The Git repository installer above is the recommended
+installation path; manually copying the repository is not required.
+
+### Naming and updates
+
+| Surface | Name |
+| --- | --- |
+| GitHub repository / Python distribution | `hermes-telegram-memory-approval` |
+| Hermes manifest ID, enable/update commands and settings key | `telegram-memory-approval` |
+| Python import package | `telegram_memory_approval` |
+| Display label | Telegram Memory Approval |
+
+The `hermes-` repository prefix identifies the host ecosystem; Hermes resolves
+the installed plugin ID from `plugin.yaml`, not from the repository's name.
+
+```bash
+hermes plugins update telegram-memory-approval
+# Restart the gateway after reviewing the update.
+```
 
 **Routing:** native pending records contain no authenticated originating chat/topic.
 The plugin therefore always uses explicit fallback chat/topic, never a summary,
 username, ambient process environment or guessed session. If fallback is General,
-leave `fallback_topic_id` unset/null. All cards go there, including background proposals.
+leave `fallback_topic_id` unset/null (Telegram may report General as thread `1`).
+All cards go there, including background proposals.
 
 ## Architecture
 
@@ -81,6 +114,8 @@ SQLite unique native IDs and conditional claims prevent duplicate deliveries and
 callback replay. Only final confirmed cards become active; existing active cards
 survive restart without another send. Sending/applying rows become `uncertain`.
 State is persisted before side effects, not after a callback acknowledgement.
+On unload, the ledger and runtime lock remain open until the polling task
+finishes cancellation; interrupted sends become `uncertain`, not retryable.
 
 ## Security and operational limits
 
@@ -144,7 +179,7 @@ CI pins the tested upstream revision. Coverage includes both memory targets,
 stale-target refusal, unrelated native writers, exact text chunks, payload rewrite,
 non-owner/cross-topic/wrong-message rejection, callback repeat, uncertain sends,
 restart recovery, SQLite claims and actual factory registration/cleanup.
-Verified locally: **48 tests passed**, with no expected failures, in a clean test
+Verified locally: **53 tests passed**, with no expected failures, in a clean test
 virtualenv. Both wheel and source distribution builds succeeded.
 Live gateway installation/network delivery is intentionally **not** claimed tested.
 See [compatibility evidence](docs/FEASIBILITY.md). MIT licensed.
