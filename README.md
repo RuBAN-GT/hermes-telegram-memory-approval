@@ -1,7 +1,5 @@
 # Hermes Telegram Memory Approval
 
-[![tests](https://github.com/RuBAN-GT/hermes-telegram-memory-approval/actions/workflows/ci.yml/badge.svg)](https://github.com/RuBAN-GT/hermes-telegram-memory-approval/actions/workflows/ci.yml)
-
 Deployable Python plugin for **entry-level** review of Hermes' native MEMORY.md
 and USER.md proposals in the existing Telegram gateway. No second bot, polling
 client, core patches, private memory locks, or prompt-cache mutation.
@@ -31,7 +29,7 @@ client, core patches, private memory locks, or prompt-cache mutation.
 
 Verified against Hermes source revision
 `802e0b1daebad8a60da496db1a070fe13ddc45bd`, Python 3.11 and PTB 22.8.
-CI also tests Python 3.12/3.13; a separate workflow checks the earlier
+Local tests also pass against the earlier
 `8ffb3c655000f57f489a93cd2b32b5b71dc5c2e4` compatibility baseline.
 Requires Unix `fcntl`, native pending/pinned replay APIs, an **in-process** plugin
 runtime and Telegram gateway. Host-isolated plugins cannot receive the native PTB
@@ -183,7 +181,7 @@ HERMES_SOURCE=/path/to/read-only/hermes-checkout .venv/bin/python -m pytest -q
 .venv/bin/python -m build
 ```
 
-CI pins the tested upstream revision. Coverage includes both memory targets,
+Coverage includes both memory targets,
 stale-target refusal, unrelated native writers, exact text chunks, payload rewrite,
 non-owner/cross-topic/wrong-message rejection, callback repeat, uncertain sends,
 restart recovery, SQLite claims and actual factory registration/cleanup.
