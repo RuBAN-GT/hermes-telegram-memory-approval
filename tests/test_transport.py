@@ -31,10 +31,12 @@ class Query:
         self.from_user = NS(id=owner)
         self.message = NS(chat=NS(id=chat), message_thread_id=topic, message_id=message)
         self.answers = []
+        self.answer_options = []
         self.edits = []
 
-    async def answer(self, text, **kwargs):
+    async def answer(self, text=None, **kwargs):
         self.answers.append(text)
+        self.answer_options.append(kwargs)
 
     async def edit_message_text(self, **kwargs):
         self.edits.append(kwargs)
@@ -67,6 +69,7 @@ def token(store):
 
 def click(service, q):
     asyncio.run(service.callback(NS(callback_query=q), None))
+    assert all(not options.get('show_alert', False) for options in q.answer_options)
 
 
 @pytest.mark.parametrize('target', ['memory', 'user'])
@@ -86,6 +89,8 @@ def test_transport_native_roundtrip_and_no_replay(setup, target, action):
     q = Query(token(store))
     click(service, q)
     assert store.get(token(store))['state'] == 'saved'
+    assert q.answers == [None]
+    assert q.edits == [dict(text='✅ Сохранено', parse_mode=None, reply_markup=None)]
     expected = [] if action == 'remove' else ['Exact proposed fact.']
     assert disk_entries(target) == expected
     click(service, q)
@@ -108,10 +113,28 @@ def test_reject_is_terminal(setup):
     service, bot, store = setup
     stage()
     asyncio.run(service.scan())
-    click(service, Query(token(store), action='reject'))
+    q = Query(token(store), action='reject')
+    click(service, q)
+    assert q.answers == [None]
+    assert q.edits == [dict(text='❌ Отклонено', parse_mode=None, reply_markup=None)]
     click(service, Query(token(store)))
     assert store.get(token(store))['state'] == 'rejected'
     assert disk_entries('memory') == []
+
+
+def test_expired_callback_still_updates_terminal_card(setup):
+    service, bot, store = setup
+    stage()
+    asyncio.run(service.scan())
+    q = Query(token(store))
+    async def expired_answer(*args, **kwargs):
+        raise TimeoutError('Callback expired')
+    q.answer = expired_answer
+    click(service, q)
+    assert store.get(token(store))['state'] == 'saved'
+    assert q.edits == [dict(text='✅ Сохранено', parse_mode=None, reply_markup=None)]
+    assert len(bot.messages) == 2
+    assert disk_entries('memory') == ['Exact proposed fact.']
 
 
 def test_payload_rewrite_invalidates_card(setup, profile):

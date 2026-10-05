@@ -65,19 +65,19 @@ class Service:
             msg.chat.id != row['chat'] or
             (getattr(msg, 'message_thread_id', None) or 1) != (row['topic'] or 1) or
             msg.message_id != row['message'] or row['state'] != 'active'):
-            await q.answer("Нет доступа, другая карточка/тема или решение уже принято.", show_alert=True)
+            await q.answer("Нет доступа, другая карточка/тема или решение уже принято.", show_alert=False)
             return
         if not self.bridge.enabled():
-            await q.answer("Штатное подтверждение памяти выключено; запись запрещена.", show_alert=True)
+            await q.answer("Штатное подтверждение памяти выключено; запись запрещена.", show_alert=False)
             return
         record = self.bridge.get(row['native_id'])
         if record is None or fingerprint(record) != row['hash']:
             self.store.transition(row['token'], 'active', 'invalid', detail='Native pending record changed or missing')
-            await q.answer("Предложение изменилось или исчезло; запись запрещена.", show_alert=True)
+            await q.answer("Предложение изменилось или исчезло; запись запрещена.", show_alert=False)
             return
         # Claim BEFORE any side effect. A crash cannot replay the write automatically.
         if not self.store.transition(row['token'], 'active', 'applying'):
-            await q.answer("Решение уже принято.", show_alert=True)
+            await q.answer("Решение уже принято.", show_alert=False)
             return
         try:
             if match[2] == 'reject':
@@ -93,7 +93,12 @@ class Service:
             state = 'uncertain'
             log.exception("Apply uncertain; manual reconciliation required")
         label = {"saved": "✅ Сохранено", "rejected": "❌ Отклонено", "refused": "⚠️ Не применено: запись изменилась или нарушены ограничения", "uncertain": "⚠️ Результат неясен — нужна ручная проверка"}[state]
-        await q.answer(label, show_alert=True)
+        try:
+            # Clear Telegram's button spinner silently; the card owns the result.
+            await q.answer()
+        except Exception:
+            # An expired callback must not prevent updating a completed decision.
+            log.warning("Could not acknowledge callback; updating terminal card anyway")
         try:
             await q.edit_message_text(text=label, parse_mode=None, reply_markup=None)
         except Exception:

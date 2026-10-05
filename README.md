@@ -12,6 +12,9 @@ client, core patches, private memory locks, or prompt-cache mutation.
   **❌ Отклонить**. Full proposed entry is shown, and replacements/deletions show
   the full pinned original. Plain text is chunked by UTF-16 length; buttons are
   sent only after all chunks have confirmed delivery.
+- Button decisions update the existing card and remove its buttons, without
+  modal dialogs or additional messages. Access/validation errors use a short
+  non-modal Telegram notification.
 - Only the configured numeric owner can act, in the bound chat, topic and exact
   final card message. Pending records are SHA-256 pinned in durable SQLite; any
   record rewrite/missing record invalidates the card, never updates its payload.
@@ -90,6 +93,11 @@ the installed plugin ID from `plugin.yaml`, not from the repository's name.
 hermes plugins update telegram-memory-approval
 # Restart the gateway after reviewing the update.
 ```
+
+Version **0.1.1** removes modal callback dialogs. Run the update command in the
+same Hermes profile used by the gateway, then fully restart that gateway with
+your usual service manager. Existing settings and the SQLite ledger are retained;
+reinstallation or clearing pending records is not needed.
 
 **Routing:** native pending records contain no authenticated originating chat/topic.
 The plugin therefore always uses explicit fallback chat/topic, never a summary,
@@ -179,7 +187,7 @@ CI pins the tested upstream revision. Coverage includes both memory targets,
 stale-target refusal, unrelated native writers, exact text chunks, payload rewrite,
 non-owner/cross-topic/wrong-message rejection, callback repeat, uncertain sends,
 restart recovery, SQLite claims and actual factory registration/cleanup.
-Verified locally: **53 tests passed**, with no expected failures, in a clean test
+Verified locally: **54 tests passed**, with no expected failures, in a clean test
 virtualenv. Both wheel and source distribution builds succeeded.
 Live gateway installation/network delivery is intentionally **not** claimed tested.
 See [compatibility evidence](docs/FEASIBILITY.md). MIT licensed.
