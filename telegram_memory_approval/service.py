@@ -42,7 +42,7 @@ class Service:
                     InlineKeyboardButton("✅ Сохранить", callback_data=f"hma:{token}:save"),
                     InlineKeyboardButton("❌ Отклонить", callback_data=f"hma:{token}:reject")]])
                 card = await self.bot.send_message(chat_id=self.chat, message_thread_id=self.topic,
-                    text="Полная запись показана выше. Сохранить или отклонить это изменение?",
+                    text="Предложение целиком показано выше. Сохранить или отклонить все его изменения?",
                     parse_mode=None, reply_markup=keyboard, disable_notification=True)
                 self.store.transition(token, 'sending', 'active', message=card.message_id)
             except asyncio.CancelledError:

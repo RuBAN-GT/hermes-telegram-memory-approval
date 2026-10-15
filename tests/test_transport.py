@@ -215,10 +215,10 @@ def test_restart_recovery_no_duplicates(setup, state):
     assert store.get(t)['state'] == ('active' if state == 'active' else 'uncertain')
 
 
-def test_batch_and_legacy_fail_closed(setup):
+def test_malformed_batch_and_legacy_fail_closed(setup):
     service, bot, store = setup
     stage('replace')  # missing pin
-    stage_write('memory', {'action':'batch', 'target':'memory', 'operations':[{'action':'add','content':'x'}, {'action':'add','content':'y'}]}, summary='', origin='foreground')
+    stage_write('memory', {'action':'batch', 'target':'memory', 'operations':[{'action':'add','content':'x'}, {'action':'remove','old_text':'y'}]}, summary='', origin='foreground')
     asyncio.run(service.scan())
     assert bot.messages == []
     assert disk_entries('memory') == []
@@ -316,7 +316,13 @@ def test_one_entry_batch_native_replay(setup, action):
     op = {'action': action}
     if action != 'remove': op['new_text'] = 'Batch single entry'
     if action != 'add': op['old_text'] = 'Original pinned'
-    result = json.loads(memory_tool(target='memory', operations=[op], store=load_on_disk_store()))
+    if action == 'replace':
+        # Legacy replace proposals still replay, but current Hermes no longer
+        # lets the model create them. Exercise the public staging/replay API.
+        op['matched_entry'] = 'Original pinned entry'
+        result = {'pending_id': stage_write('memory', dict(action='batch', target='memory', operations=[op]), summary='', origin='foreground')['id']}
+    else:
+        result = json.loads(memory_tool(target='memory', operations=[op], store=load_on_disk_store()))
     assert 'pending_id' in result, result
     asyncio.run(service.scan())
     assert len(bot.messages) == 2
@@ -461,3 +467,121 @@ def test_factory_failure_releases_profile_lock(setup):
         await asyncio.sleep(0)
         await asyncio.sleep(0)
     asyncio.run(run())
+
+
+@pytest.mark.skipif(not hasattr(MemoryStore, 'patch'), reason='Hermes predates span patches')
+@pytest.mark.parametrize('target', ['memory', 'user'])
+@pytest.mark.parametrize('batch', [False, True])
+@pytest.mark.parametrize('decision', ['save', 'reject'])
+def test_real_background_patch_waits_for_owner(setup, target, batch, decision):
+    from tools.memory_tool import memory_tool, load_on_disk_store
+    from tools.skill_provenance import set_current_write_origin, reset_current_write_origin
+    service, bot, store = setup
+    before = 'Context: old value. Keep the rest 🦊.'
+    after = 'Context: new value. Keep the rest 🦊.'
+    assert load_on_disk_store().add(target, before)['success']
+    origin = set_current_write_origin('background_review')
+    try:
+        op = dict(action='patch', old_text=' old ', content=' new ')
+        kwargs = dict(operations=[op]) if batch else op
+        result = json.loads(memory_tool(target=target, store=load_on_disk_store(), **kwargs))
+    finally:
+        reset_current_write_origin(origin)
+    assert result.get('staged'), result
+    assert disk_entries(target) == [before]
+    asyncio.run(service.scan())
+    displayed = ''.join(m['text'] for m in bot.messages[:-1])
+    assert f'БЫЛО (полная запись):\n{before}' in displayed
+    assert f'СТАНЕТ (полная запись):\n{after}' in displayed
+    click(service, Query(token(store), owner=43))
+    assert disk_entries(target) == [before]
+    click(service, Query(token(store), action=decision))
+    assert disk_entries(target) == ([after] if decision == 'save' else [before])
+    assert store.get(token(store))['state'] == ('saved' if decision == 'save' else 'rejected')
+
+
+@pytest.mark.skipif(not hasattr(MemoryStore, 'patch'), reason='Hermes predates span patches')
+@pytest.mark.parametrize('target', ['memory', 'user'])
+@pytest.mark.parametrize('outcome', ['save', 'reject', 'stale'])
+def test_background_atomic_batch_is_one_decision(setup, target, outcome, monkeypatch):
+    from tools.memory_tool import memory_tool, load_on_disk_store
+    from tools.skill_provenance import set_current_write_origin, reset_current_write_origin
+    service, bot, store = setup
+    native = load_on_disk_store()
+    assert native.add(target, 'Old fact. Keep context.')['success']
+    assert native.add(target, 'Obsolete fact.')['success']
+    ops = [dict(action='patch', old_text='Old', new_text='New'),
+           dict(action='remove', old_text='Obsolete'),
+           dict(action='add', content='Additional fact.')]
+    origin = set_current_write_origin('background_review')
+    try:
+        result = json.loads(memory_tool(target=target, operations=ops, store=load_on_disk_store()))
+    finally:
+        reset_current_write_origin(origin)
+    assert result.get('staged'), result
+    assert disk_entries(target) == ['Old fact. Keep context.', 'Obsolete fact.']
+    asyncio.run(service.scan())
+    displayed = ''.join(m['text'] for m in bot.messages[:-1])
+    for text in ['Атомарный пакет: 3', 'New fact. Keep context.', 'Obsolete fact.', 'Additional fact.']:
+        assert text in displayed
+    assert sum('reply_markup' in m for m in bot.messages) == 1
+    calls = []
+    apply = service.bridge.apply
+    def track(payload):
+        calls.append(payload)
+        return apply(payload)
+    monkeypatch.setattr(service.bridge, 'apply', track)
+    if outcome == 'stale':
+        assert native.replace(target, 'Obsolete', 'Changed independently.')['success']
+    else:
+        assert native.add(target, 'Independent fact.')['success']
+    q = Query(token(store), action='reject' if outcome == 'reject' else 'save', message=len(bot.messages))
+    click(service, q)
+    click(service, q)
+    assert len(calls) == (0 if outcome == 'reject' else 1)
+    if calls:
+        assert calls[0]['action'] == 'batch'
+        assert len(calls[0]['operations']) == 3
+    expected = {
+        'save': ['New fact. Keep context.', 'Independent fact.', 'Additional fact.'],
+        'reject': ['Old fact. Keep context.', 'Obsolete fact.', 'Independent fact.'],
+        'stale': ['Old fact. Keep context.', 'Changed independently.'],
+    }
+    assert disk_entries(target) == expected[outcome]
+    assert store.get(token(store))['state'] == {'save': 'saved', 'reject': 'rejected', 'stale': 'refused'}[outcome]
+
+
+@pytest.mark.parametrize('op', [
+    {'action': 'patch', 'old_text': 'Old', 'content': 'New'},  # missing pin
+    {'action': 'patch', 'old_text': 'missing', 'content': 'New', 'matched_entry': 'Old fact'},
+    {'action': 'patch', 'old_text': 'aa', 'content': 'b', 'matched_entry': 'aaa'},  # overlapping
+    {'action': 'patch', 'old_text': 'Old', 'content': 'Old', 'matched_entry': 'Old fact'},
+    {'action': 'patch', 'old_text': 'Old', 'content': '§', 'matched_entry': 'Old fact'},
+    {'action': 'patch', 'old_text': 'Old', 'content': ' ', 'matched_entry': 'Old fact'},
+    {'action': 'add', 'content': 'valid', 'target': 'user'},  # per-op target not native
+    {'action': 'future-action', 'content': 'valid'},
+    None,
+])
+def test_invalid_operation_prevents_entire_batch_card(setup, op):
+    service, bot, store = setup
+    stage_write('memory', dict(action='batch', target='memory', operations=[
+        dict(action='add', content='Must not be applied alone'), op,
+    ]), summary='', origin='background_review')
+    asyncio.run(service.scan())
+    assert not bot.messages
+    assert store.db.execute('select count(*) from proposals').fetchone()[0] == 0
+    assert disk_entries('memory') == []
+
+
+def test_multi_entry_unicode_batch_delivers_all_text_before_buttons(setup):
+    service, bot, store = setup
+    texts = [('🦊 literal <tag> ' * 350).strip(), ('🦉 second entry ' * 350).strip()]
+    stage_write('memory', dict(action='batch', target='memory', operations=[
+        dict(action='add', content=text) for text in texts
+    ]), summary='', origin='background_review')
+    asyncio.run(service.scan())
+    displayed = ''.join(m['text'] for m in bot.messages[:-1])
+    assert all(text in displayed for text in texts)
+    assert all('reply_markup' not in m for m in bot.messages[:-1])
+    assert all(len(m['text'].encode('utf-16-le')) // 2 <= 3500 for m in bot.messages[:-1])
+    assert store.get(token(store))['state'] == 'active'

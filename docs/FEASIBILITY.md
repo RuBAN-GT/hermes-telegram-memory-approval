@@ -1,5 +1,33 @@
 # Compatibility evidence and contract
 
+## Current API check (2026-10-15, plugin 0.2.0)
+
+Hermes HEAD checked: `3b043e19005fea400a8e556334526ef1d21679e4`.
+Public pending APIs, configured store replay and Telegram registration remain
+compatible. The model-facing memory tool now uses `patch` (unique span replacement)
+instead of `replace`, and recommends atomic `operations` arrays. Background review
+also stages destructive consolidation operations; filtering only old single-entry
+formats left these records in native pending without Telegram cards.
+
+The transport now validates every operation, renders full pinned before/after text
+for patches, and offers one decision for the complete batch. Replay passes the
+original payload to `apply_memory_pending` exactly once, preserving the native
+lock, sequential pins, final budget checks and all-or-nothing mutation. It does not
+split batches. Unknown formats, ambiguous patches and missing pins fail closed.
+
+Verification: 78 tests pass on current HEAD; 64 pass and 14 native patch tests skip
+on `802e0b1daebad8a60da496db1a070fe13ddc45bd`. New regression tests exercise real
+`memory_tool` calls under `background_review` provenance for both stores, waiting
+for approval, owner rejection, full span rendering, atomic patch/remove/add replay,
+stale-member refusal without partial writes, unrelated writers, invalid members,
+and complete Unicode batch delivery before activation. Telegram network I/O is fake.
+
+Skills use the separate native `skills.write_approval` gate and `/skills` review
+surface; this memory transport neither applies nor approves skill proposals.
+See upstream [memory documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory/).
+
+## Historical baseline evidence
+
 Baseline source: Hermes revision `8ffb3c655000f57f489a93cd2b32b5b71dc5c2e4`.
 The line references below describe that baseline. Also verified against
 `802e0b1daebad8a60da496db1a070fe13ddc45bd` with Python 3.11 and PTB 22.8:

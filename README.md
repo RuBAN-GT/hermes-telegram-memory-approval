@@ -6,9 +6,10 @@ client, core patches, private memory locks, or prompt-cache mutation.
 
 ## Contract
 
-- One native `add`, `replace`, or `remove` per card; exactly **✅ Сохранить** and
+- Native `add`, `patch`, `remove` and legacy `replace`; exactly **✅ Сохранить** and
   **❌ Отклонить**. Full proposed entry is shown, and replacements/deletions show
-  the full pinned original. Plain text is chunked by UTF-16 length; buttons are
+  the full pinned original. Span patches show the full resulting entry, preserving
+  all untouched text (not just the replacement span). Plain text is chunked by UTF-16 length; buttons are
   sent only after all chunks have confirmed delivery.
 - Button decisions update the existing card and remove its buttons, without
   modal dialogs or additional messages. Access/validation errors use a short
@@ -20,17 +21,16 @@ client, core patches, private memory locks, or prompt-cache mutation.
   `matched_entry`, checked atomically inside native mutation. A changed/missing
   target is refused. **Independent entries changing MUST NOT invalidate approval.**
   Add saves the immutable exact proposed text, subject to native limits.
-- One-entry `operations` arrays are supported, including the `new_text` alias; original native batch replay is preserved. Multi-entry atomic batches are **unsupported and fail closed** (no card, no replay). Never
-  split an existing atomic batch into independent writes. Recreate single-op
-  proposals only when they are independently valid, or review the original batch
-  through the native interface. Legacy destructive proposals without pins fail closed.
+- `operations` arrays are supported, including the `new_text` alias. Every operation
+  is shown in order, with **one decision for the entire atomic batch**. The original
+  native batch is replayed once, never split into independent writes. Invalid or
+  unknown operations and legacy destructive proposals without pins fail closed.
 
 ## Compatibility and installation
 
-Verified against Hermes source revision
-`802e0b1daebad8a60da496db1a070fe13ddc45bd`, Python 3.11 and PTB 22.8.
-Local tests also pass against the earlier
-`8ffb3c655000f57f489a93cd2b32b5b71dc5c2e4` compatibility baseline.
+Verified against current Hermes source revision
+`3b043e19005fea400a8e556334526ef1d21679e4` (2026-10-15), Python 3.11 and PTB 22.8.
+Also tested against `802e0b1daebad8a60da496db1a070fe13ddc45bd` (before span patches).
 Requires Unix `fcntl`, native pending/pinned replay APIs, an **in-process** plugin
 runtime and Telegram gateway. Host-isolated plugins cannot receive the native PTB
 Application. This transport covers only native memory, not OpenViking, skills,
@@ -88,14 +88,44 @@ The `hermes-` repository prefix identifies the host ecosystem; Hermes resolves
 the installed plugin ID from `plugin.yaml`, not from the repository's name.
 
 ```bash
+# Run in the SAME Hermes profile / HERMES_HOME as the gateway.
+hermes gateway stop
 hermes plugins update telegram-memory-approval
-# Restart the gateway after reviewing the update.
+hermes config set memory.write_approval true
+hermes gateway start
+hermes gateway status
 ```
 
-Version **0.1.1** removes modal callback dialogs. Run the update command in the
-same Hermes profile used by the gateway, then fully restart that gateway with
-your usual service manager. Existing settings and the SQLite ledger are retained;
-reinstallation or clearing pending records is not needed.
+Version **0.2.0** adds current Hermes span patches and complete atomic batches,
+including background self-improvement proposals previously left without Telegram
+cards. Review any installer prompts; if updating fails, fix the reported error
+before starting the gateway. For a gateway managed outside the Hermes CLI, use its
+normal service manager to stop/start it instead. A full process restart is required.
+Existing settings and the SQLite ledger are retained; reinstallation or clearing
+pending records is not needed. Previously unsupported valid proposals will be
+picked up on the next scan. Already decided/uncertain records are not resent.
+
+### Check background self-improvement
+
+1. Confirm `memory.write_approval: true` in the gateway's active profile and
+   `plugins.isolation: in_process`. Ask Hermes to propose a harmless temporary
+   memory fact. It must appear as a Telegram card **before** entering MEMORY.md or
+   USER.md. Reject it and verify that the fact was not saved.
+2. Background proposals use the same configured destination as foreground ones.
+   `patch` cards show full before/after entries; batch cards enumerate every
+   operation and approve/reject them together. Merely appearing in `/memory pending`
+   means **staged, not saved**. This plugin retains even decided native pending
+   records for audit; the SQLite ledger prevents replay (see below).
+3. Self-improvement can also modify **skills**. These use a separate gate:
+   `hermes config set skills.write_approval true`. This plugin does **not** send
+   skill approval cards; review them with `/skills pending`, `/skills diff <id>`
+   and `/skills approve <id>` or `/skills reject <id>`. Restart the gateway after
+   configuration changes. Do not use `approve all` to clear an unfamiliar queue.
+4. If memory proposals still have no cards, check gateway logs for
+   `Unsupported pending proposal`, `Pending scan failed`, or `Delivery uncertain`,
+   and verify the profile, configured chat/topic and loaded plugin version.
+   Invalid/legacy unpinned proposals require recreation; uncertain deliveries need
+   manual reconciliation, not deleting/resetting the ledger.
 
 **Routing:** native pending records contain no authenticated originating chat/topic.
 The plugin therefore always uses explicit fallback chat/topic, never a summary,
@@ -105,8 +135,8 @@ All cards go there, including background proposals.
 
 ## Architecture
 
-- `bridge.py`: public native pending reads, strict single-op validation, immutable
-  canonical record hash, configured native store replay.
+- `bridge.py`: public native pending reads, strict operation/batch validation, immutable
+  canonical record hash, configured native atomic replay.
 - `render.py`: complete before/after exact text and conservative Telegram chunks.
 - `store.py`: SQLite WAL, FULL synchronous transactions and compare-state claims.
 - `service.py`: bounded new deliveries per scan, scoped owner/card callbacks,
@@ -135,8 +165,8 @@ Native pending records are retained for audit, including saved and rejected ones
 there is no public atomic native consume+apply API. SQLite is the authoritative
 transport disposition and prevents redisplay/replay. A retained native record is
 **not** permission to approve again in the CLI. Archive terminal records after
-reconciling them, without deleting the SQLite ledger. Unsupported batches remain
-native pending for deliberate native review. Polling enumerates native pending
+reconciling them, without deleting the SQLite ledger. Unsupported or invalid proposals
+remain native pending for deliberate native review. Polling enumerates native pending
 files; manage audit growth for large deployments (100 new cards maximum per scan,
 serial sends). This is a single-profile transport, not a distributed write service.
 
@@ -185,7 +215,8 @@ Coverage includes both memory targets,
 stale-target refusal, unrelated native writers, exact text chunks, payload rewrite,
 non-owner/cross-topic/wrong-message rejection, callback repeat, uncertain sends,
 restart recovery, SQLite claims and actual factory registration/cleanup.
-Verified locally: **54 tests passed**, with no expected failures, in a clean test
-virtualenv. Both wheel and source distribution builds succeeded.
+Verified locally on current Hermes: **78 tests passed**, with no skips or expected
+failures. On the pre-patch baseline: **64 passed, 14 skipped** (native span-patch
+tests only). Both wheel and source distribution builds succeeded.
 Live gateway installation/network delivery is intentionally **not** claimed tested.
 See [compatibility evidence](docs/FEASIBILITY.md). MIT licensed.
