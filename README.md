@@ -96,7 +96,9 @@ hermes gateway start
 hermes gateway status
 ```
 
-Version **0.2.0** adds current Hermes span patches and complete atomic batches,
+Version **0.2.1** removes saved/rejected proposals from native pending, including
+matching records left by earlier versions. The full audit remains in SQLite.
+Version **0.2.0** added current Hermes span patches and complete atomic batches,
 including background self-improvement proposals previously left without Telegram
 cards. Review any installer prompts; if updating fails, fix the reported error
 before starting the gateway. For a gateway managed outside the Hermes CLI, use its
@@ -114,8 +116,8 @@ picked up on the next scan. Already decided/uncertain records are not resent.
 2. Background proposals use the same configured destination as foreground ones.
    `patch` cards show full before/after entries; batch cards enumerate every
    operation and approve/reject them together. Merely appearing in `/memory pending`
-   means **staged, not saved**. This plugin retains even decided native pending
-   records for audit; the SQLite ledger prevents replay (see below).
+   means **staged, not saved**. After a successful save or rejection, the native
+   pending record is removed; the SQLite ledger retains the audit and prevents replay.
 3. Self-improvement can also modify **skills**. These use a separate gate:
    `hermes config set skills.write_approval true`. This plugin does **not** send
    skill approval cards; review them with `/skills pending`, `/skills diff <id>`
@@ -161,12 +163,17 @@ cannot prevent native writes after an operator turns it off. Local trusted code,
 the native CLI approval path and direct filesystem writers are outside its policy.
 Do not concurrently approve these records through another interface.
 
-Native pending records are retained for audit, including saved and rejected ones:
-there is no public atomic native consume+apply API. SQLite is the authoritative
-transport disposition and prevents redisplay/replay. A retained native record is
-**not** permission to approve again in the CLI. Archive terminal records after
-reconciling them, without deleting the SQLite ledger. Unsupported or invalid proposals
-remain native pending for deliberate native review. Polling enumerates native pending
+After a successful save or owner rejection, the plugin commits the terminal SQLite
+disposition, then removes the unchanged native pending record through public
+`discard_pending`. SQLite retains the complete record and decision for audit.
+Scans retry failed cleanup and remove matching saved/rejected records left by older
+versions. Rewritten records, refused/invalid proposals and uncertain outcomes are
+not automatically deleted. There is no public atomic native consume+apply API:
+a crash or failed cleanup may leave a decided native record visible temporarily.
+Do not approve it again through the CLI or another interface. Local pending files
+are trusted; hash-check and native deletion are not an atomic compare-and-delete.
+Unsupported or invalid proposals remain pending for deliberate native review.
+Polling enumerates native pending
 files; manage audit growth for large deployments (100 new cards maximum per scan,
 serial sends). This is a single-profile transport, not a distributed write service.
 
@@ -215,8 +222,8 @@ Coverage includes both memory targets,
 stale-target refusal, unrelated native writers, exact text chunks, payload rewrite,
 non-owner/cross-topic/wrong-message rejection, callback repeat, uncertain sends,
 restart recovery, SQLite claims and actual factory registration/cleanup.
-Verified locally on current Hermes: **78 tests passed**, with no skips or expected
-failures. On the pre-patch baseline: **64 passed, 14 skipped** (native span-patch
+Verified locally on current Hermes: **90 tests passed**, with no skips or expected
+failures. On the pre-patch baseline: **76 passed, 14 skipped** (native span-patch
 tests only). Both wheel and source distribution builds succeeded.
 Live gateway installation/network delivery is intentionally **not** claimed tested.
 See [compatibility evidence](docs/FEASIBILITY.md). MIT licensed.

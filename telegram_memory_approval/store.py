@@ -35,6 +35,10 @@ class Store:
         row = self.db.execute("SELECT * FROM proposals WHERE token=?", (token,)).fetchone()
         return dict(row) if row else None
 
+    def get_native(self, native_id):
+        row = self.db.execute("SELECT * FROM proposals WHERE native_id=?", (native_id,)).fetchone()
+        return dict(row) if row else None
+
     def transition(self, token, before, after, *, message=None, detail=''):
         with self.db:
             cursor = self.db.execute("UPDATE proposals SET state=?, message=COALESCE(?,message),detail=? WHERE token=? AND state=?",

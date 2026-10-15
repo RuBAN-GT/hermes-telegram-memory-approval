@@ -1,5 +1,19 @@
 # Compatibility evidence and contract
 
+## Native pending cleanup (plugin 0.2.1)
+
+Saved/rejected decisions are committed to SQLite before invoking public
+`discard_pending("memory", id)`. The native record must still match its pinned
+hash. Scans retry cleanup, including saved/rejected records from previous plugin
+versions. Refused, invalid and uncertain rows are never automatically discarded.
+Cleanup failure does not change a known disposition or replay a write. SQLite
+keeps the complete audit. Native deletion is not atomic with apply or hash checks;
+do not concurrently modify/approve native pending through another interface.
+
+Verification on the same current/baseline revisions below: 90 passed / 76 passed,
+14 skipped. Regression tests cover native queue removal, legacy cleanup, preserved
+audit and rewritten records, and cleanup failures/retries without write replay.
+
 ## Current API check (2026-10-15, plugin 0.2.0)
 
 Hermes HEAD checked: `3b043e19005fea400a8e556334526ef1d21679e4`.

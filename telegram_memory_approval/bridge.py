@@ -76,6 +76,10 @@ class NativeBridge:
         from tools.write_approval import get_pending
         return get_pending("memory", pending_id)
 
+    def discard(self, pending_id):
+        from tools.write_approval import discard_pending
+        return discard_pending("memory", pending_id)
+
     def apply(self, payload):
         from tools.memory_tool import apply_memory_pending, load_on_disk_store
         return apply_memory_pending(payload, load_on_disk_store())

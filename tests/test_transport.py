@@ -80,7 +80,7 @@ def test_transport_native_roundtrip_and_no_replay(setup, target, action):
     native.load_from_disk()
     if action != 'add':
         assert native.add(target, 'Original full entry.')['success']
-    stage(action, target, matched='Original full entry.' if action != 'add' else None)
+    record = stage(action, target, matched='Original full entry.' if action != 'add' else None)
     asyncio.run(service.scan())
     assert len(bot.messages) == 2
     assert bot.messages[0]['parse_mode'] is None
@@ -89,6 +89,7 @@ def test_transport_native_roundtrip_and_no_replay(setup, target, action):
     q = Query(token(store))
     click(service, q)
     assert store.get(token(store))['state'] == 'saved'
+    assert service.bridge.get(record['id']) is None
     assert q.answers == [None]
     assert q.edits == [dict(text='✅ Сохранено', parse_mode=None, reply_markup=None)]
     expected = [] if action == 'remove' else ['Exact proposed fact.']
@@ -111,7 +112,7 @@ def test_nonowner_cross_topic_wrong_card(setup, override):
 
 def test_reject_is_terminal(setup):
     service, bot, store = setup
-    stage()
+    record = stage()
     asyncio.run(service.scan())
     q = Query(token(store), action='reject')
     click(service, q)
@@ -119,6 +120,7 @@ def test_reject_is_terminal(setup):
     assert q.edits == [dict(text='❌ Отклонено', parse_mode=None, reply_markup=None)]
     click(service, Query(token(store)))
     assert store.get(token(store))['state'] == 'rejected'
+    assert service.bridge.get(record['id']) is None
     assert disk_entries('memory') == []
 
 
@@ -585,3 +587,61 @@ def test_multi_entry_unicode_batch_delivers_all_text_before_buttons(setup):
     assert all('reply_markup' not in m for m in bot.messages[:-1])
     assert all(len(m['text'].encode('utf-16-le')) // 2 <= 3500 for m in bot.messages[:-1])
     assert store.get(token(store))['state'] == 'active'
+
+
+@pytest.mark.parametrize('state', ['saved', 'rejected', 'refused', 'uncertain', 'invalid', 'active'])
+def test_scan_cleans_only_known_decisions_from_old_versions(setup, state):
+    service, bot, store = setup
+    record = stage()
+    t = store.insert(record, fingerprint(record), 42, -100, 7)
+    store.transition(t, 'sending', state, message=2)
+    store.recover()
+    asyncio.run(service.scan())
+    assert (service.bridge.get(record['id']) is None) == (state in {'saved', 'rejected'})
+    assert store.get(t)['state'] == state
+    assert json.loads(store.get(t)['record']) == record  # audit is retained
+    assert not bot.messages
+    assert disk_entries('memory') == []
+
+
+@pytest.mark.parametrize('decision', ['save', 'reject'])
+@pytest.mark.parametrize('failure', ['false', 'exception'])
+def test_cleanup_failure_retries_without_replaying_decision(setup, monkeypatch, decision, failure):
+    service, bot, store = setup
+    record = stage()
+    asyncio.run(service.scan())
+    discard = service.bridge.discard
+    def failed_discard(native_id):
+        # The terminal SQLite disposition must already be durable.
+        assert store.get(token(store))['state'] == ('saved' if decision == 'save' else 'rejected')
+        if failure == 'exception':
+            raise OSError('Simulated cleanup failure')
+        return False
+    monkeypatch.setattr(service.bridge, 'discard', failed_discard)
+    q = Query(token(store), action=decision)
+    click(service, q)
+    assert q.edits[0]['text'] == ('✅ Сохранено' if decision == 'save' else '❌ Отклонено')
+    assert service.bridge.get(record['id']) is not None
+    monkeypatch.setattr(service.bridge, 'discard', discard)
+    def no_apply(payload):
+        pytest.fail('Cleanup must never replay a native write')
+    monkeypatch.setattr(service.bridge, 'apply', no_apply)
+    click(service, q)
+    asyncio.run(service.scan())
+    assert service.bridge.get(record['id']) is None
+    assert disk_entries('memory') == (['Exact proposed fact.'] if decision == 'save' else [])
+    assert len(bot.messages) == 2
+
+
+@pytest.mark.parametrize('state', ['saved', 'rejected'])
+def test_cleanup_preserves_rewritten_native_record(setup, profile, state):
+    service, bot, store = setup
+    record = stage()
+    t = store.insert(record, fingerprint(record), 42, -100, 7)
+    store.transition(t, 'sending', state)
+    record['payload']['content'] = 'Different unreviewed proposal'
+    (profile / 'pending' / 'memory' / (record['id'] + '.json')).write_text(json.dumps(record))
+    asyncio.run(service.scan())
+    assert service.bridge.get(record['id']) == record
+    assert not bot.messages
+    assert disk_entries('memory') == []

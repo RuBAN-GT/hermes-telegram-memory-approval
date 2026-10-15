@@ -23,6 +23,11 @@ class Service:
         for record in self.bridge.pending():
             if delivered >= 100:
                 break
+            if isinstance(record, dict) and isinstance(record.get('id'), str):
+                previous = self.store.get_native(record.get('id'))
+                if previous and previous['state'] in {'saved', 'rejected'}:
+                    self.discard_decided(previous)
+                    continue
             try:
                 validate(record)
             except ValueError as exc:
@@ -81,7 +86,7 @@ class Service:
             return
         try:
             if match[2] == 'reject':
-                state, detail = 'rejected', 'Rejected by owner; native pending retained for audit'
+                state, detail = 'rejected', 'Rejected by owner'
             else:
                 validate(json.loads(row['record']))
                 result = self.bridge.apply(json.loads(row["record"])["payload"])
@@ -92,6 +97,9 @@ class Service:
             self.store.transition(row['token'], 'applying', 'uncertain', detail=type(exc).__name__)
             state = 'uncertain'
             log.exception("Apply uncertain; manual reconciliation required")
+        # Commit the disposition BEFORE removing native pending. Cleanup failure
+        # must not turn a known decision into an uncertain write or replay it.
+        self.discard_decided(self.store.get(row['token']))
         label = {"saved": "✅ Сохранено", "rejected": "❌ Отклонено", "refused": "⚠️ Не применено: запись изменилась или нарушены ограничения", "uncertain": "⚠️ Результат неясен — нужна ручная проверка"}[state]
         try:
             # Clear Telegram's button spinner silently; the card owns the result.
@@ -103,6 +111,21 @@ class Service:
             await q.edit_message_text(text=label, parse_mode=None, reply_markup=None)
         except Exception:
             log.warning("Could not remove terminal buttons; durable claim still prevents replay")
+
+    def discard_decided(self, row):
+        if not row or row['state'] not in {'saved', 'rejected'}:
+            return
+        try:
+            record = self.bridge.get(row['native_id'])
+            if record is None:
+                return
+            if fingerprint(record) != row['hash']:
+                log.warning("Decided native proposal changed; not removing %s", row['native_id'])
+                return
+            if not self.bridge.discard(row['native_id']):
+                log.warning("Native pending cleanup failed; will retry %s", row['native_id'])
+        except Exception:
+            log.exception("Native pending cleanup failed; durable decision retained")
 
     async def run(self, interval):
         while True:
