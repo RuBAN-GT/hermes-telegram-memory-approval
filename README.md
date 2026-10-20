@@ -29,7 +29,7 @@ client, core patches, private memory locks, or prompt-cache mutation.
 ## Compatibility and installation
 
 Verified against current Hermes source revision
-`3b043e19005fea400a8e556334526ef1d21679e4` (2026-10-15), Python 3.11 and PTB 22.8.
+`ce28ca328d3b85ac8663e602136eb69b027cd056` (2026-10-20), Python 3.11 and PTB 22.8.
 Also tested against `802e0b1daebad8a60da496db1a070fe13ddc45bd` (before span patches).
 Requires Unix `fcntl`, native pending/pinned replay APIs, an **in-process** plugin
 runtime and Telegram gateway. Host-isolated plugins cannot receive the native PTB
@@ -94,8 +94,15 @@ hermes plugins update telegram-memory-approval
 hermes config set memory.write_approval true
 hermes gateway start
 hermes gateway status
+hermes plugins list
 ```
 
+Version **0.2.2** verifies compatibility with Hermes as of 2026-10-20 and adds
+the native pending ID and origin (foreground/background review) to each proposal's
+text. Different IDs distinguish separate native proposals, not repeated delivery
+of one proposal. Origin is informational native metadata, never authorization or
+chat/topic routing. New tests exercise the actual Hermes Telegram adapter's
+handler ordering at startup and late load, deduplication and readiness gating.
 Version **0.2.1** removes saved/rejected proposals from native pending, including
 matching records left by earlier versions. The full audit remains in SQLite.
 Version **0.2.0** added current Hermes span patches and complete atomic batches,
@@ -106,6 +113,8 @@ normal service manager to stop/start it instead. A full process restart is requi
 Existing settings and the SQLite ledger are retained; reinstallation or clearing
 pending records is not needed. Previously unsupported valid proposals will be
 picked up on the next scan. Already decided/uncertain records are not resent.
+Confirm version **0.2.2** in `hermes plugins list`. New cards include the ID/source;
+existing active cards keep their original text and continue to work.
 
 ### Check background self-improvement
 
@@ -222,8 +231,10 @@ Coverage includes both memory targets,
 stale-target refusal, unrelated native writers, exact text chunks, payload rewrite,
 non-owner/cross-topic/wrong-message rejection, callback repeat, uncertain sends,
 restart recovery, SQLite claims and actual factory registration/cleanup.
-Verified locally on current Hermes: **90 tests passed**, with no skips or expected
-failures. On the pre-patch baseline: **76 passed, 14 skipped** (native span-patch
+Tests also exercise the real Telegram adapter and PTB first-match routing (with
+fake Application/I/O), including late plugin loading and unrelated core buttons.
+Verified locally on current Hermes: **95 tests passed**, with no skips or expected
+failures. On the pre-patch baseline: **81 passed, 14 skipped** (native span-patch
 tests only). Both wheel and source distribution builds succeeded.
 Live gateway installation/network delivery is intentionally **not** claimed tested.
 See [compatibility evidence](docs/FEASIBILITY.md). MIT licensed.

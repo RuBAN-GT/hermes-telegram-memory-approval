@@ -645,3 +645,99 @@ def test_cleanup_preserves_rewritten_native_record(setup, profile, state):
     assert service.bridge.get(record['id']) == record
     assert not bot.messages
     assert disk_entries('memory') == []
+
+
+@pytest.mark.parametrize('origin, label', [
+    ('foreground', 'основной ход'),
+    ('background_review', 'фоновый review'),
+    ('future-origin', 'не указан'),
+])
+def test_cards_identify_native_proposal_and_origin(setup, origin, label):
+    service, bot, store = setup
+    record = stage_write('memory', dict(action='add', target='user', content='Exact fact.'),
+                         summary='Not authorization', origin=origin)
+    asyncio.run(service.scan())
+    assert bot.messages[0]['text'].startswith(f"Предложение: {record['id']}\nИсточник: {label}\n")
+    assert bot.messages[0]['text'].endswith('Exact fact.')
+    assert store.get(token(store))['state'] == 'active'
+
+
+@pytest.mark.parametrize('late_load', [False, True])
+def test_native_telegram_adapter_routes_approval_before_core(setup, monkeypatch, late_load):
+    """Real Hermes adapter + PluginContext + PTB routing; no network or bot token."""
+    import importlib
+    import os
+    from telegram import Update
+    from gateway.config import PlatformConfig
+    from hermes_cli.plugins import PluginContext, PluginManager
+    from hermes_cli.plugins_manifest import PluginManifest
+    source = Path(os.environ['HERMES_SOURCE'])
+    module = ('plugins.platforms.telegram.adapter' if
+              (source / 'plugins/platforms/telegram/adapter.py').is_file() else
+              'gateway.platforms.telegram')
+    TelegramAdapter = importlib.import_module(module).TelegramAdapter
+    _, bot, _ = setup
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='offline-test', extra={}))
+    manager = PluginManager()
+    monkeypatch.setattr('hermes_cli.plugins.get_plugin_manager', lambda: manager)
+    root = Path(__file__).resolve().parents[1]
+    manifest = PluginManifest(name='telegram-memory-approval', path=str(root), source='user')
+    ctx = PluginContext(manifest, manager)
+    plugin = manager._load_directory_module(manifest)
+
+    class App:
+        running = False
+        def __init__(self):
+            self.bot, self.handlers = bot, {}
+        def add_handler(self, handler, group=0):
+            self.handlers.setdefault(group, []).append(handler)
+        def remove_handler(self, handler, group=0):
+            self.handlers[group].remove(handler)
+
+    def update(data):
+        return Update.de_json(dict(update_id=1, callback_query=dict(
+            id='offline', from_user=dict(id=42, is_bot=False, first_name='Owner'),
+            chat_instance='offline', data=data,
+        )), bot=None)
+
+    async def run():
+        app = App()
+        try:
+            if late_load:
+                adapter._wire_plugin_handlers(app)
+                adapter._register_handlers(app)
+                plugin.register(ctx)
+                adapter.rewire_plugin_handlers()
+            else:
+                plugin.register(ctx)
+                adapter._wire_plugin_handlers(app)
+                adapter._register_handlers(app)
+            factory_count = len(app.handlers[0])
+            adapter.rewire_plugin_handlers()
+            adapter.rewire_plugin_handlers()
+            assert len(app.handlers[0]) == factory_count
+            own = update('hma:' + 'a' * 32 + ':save')
+            handler = next(h for h in app.handlers[0] if h.check_update(own))
+            assert handler.pattern.pattern.startswith('^hma:')
+            loaded_service = importlib.import_module(plugin.__name__ + '.telegram_memory_approval.service').Service
+            assert handler.callback.__self__.__class__ is loaded_service
+            other = update('unrelated-core-button')
+            core_handler = next(h for h in app.handlers[0] if h.check_update(other))
+            assert core_handler.callback.__self__ is adapter
+            # A connected adapter alone isn't enough: PTB must also be running.
+            record = stage()
+            adapter._running = True
+            approval = handler.callback.__self__
+            await approval.scan()
+            assert not bot.messages
+            app.running = True
+            await approval.scan()
+            assert approval.store.get_native(record['id'])['state'] == 'active'
+        finally:
+            for handle in reversed(list(manager._registration_order)):
+                handle.dispose()
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+        assert not any(getattr(h, 'pattern', None) and h.pattern.pattern.startswith('^hma:')
+                       for h in app.handlers[0])
+    asyncio.run(run())

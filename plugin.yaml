@@ -1,6 +1,6 @@
 name: telegram-memory-approval
 label: Telegram Memory Approval
-version: 0.2.1
+version: 0.2.2
 description: Owner-only per-entry native memory approval over existing Telegram gateway
 kind: standalone
 license: MIT

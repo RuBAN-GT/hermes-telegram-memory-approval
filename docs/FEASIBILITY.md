@@ -1,5 +1,29 @@
 # Compatibility evidence and contract
 
+## Current API check (2026-10-20, plugin 0.2.2)
+
+Hermes HEAD checked: `ce28ca328d3b85ac8663e602136eb69b027cd056`.
+Compared with the 2026-10-15 snapshot, `tools/write_approval.py`,
+`tools/memory_tool.py` and `tools/memory_tool_store.py` are unchanged. Public native
+handler registration, tracked tasks/unload and readiness properties remain
+compatible. The Telegram adapter at `plugins/platforms/telegram/adapter.py` has
+topic-routing updates; the plugin continues to use its configured destination,
+not inferred originating topics. No approval API migration is needed.
+
+New integration tests load this directory plugin through the real PluginContext,
+wire it through the actual Telegram adapter and exercise PTB first-match routing.
+Both initial and late registration place approval handlers before the core
+catch-all; unrelated callback data still reaches core. Repeated rewire does not
+duplicate handlers, and delivery waits for both adapter and Application readiness.
+The Application and network I/O remain fake; no live delivery is claimed.
+
+Cards now display the pinned native ID and origin to distinguish separate Hermes
+proposals from duplicate transport delivery. Origin is informational only, not
+authorization or routing; unknown values receive a fixed fallback label.
+
+Verification: **95 passed** on this snapshot; **81 passed, 14 skipped** on
+`802e0b1daebad8a60da496db1a070fe13ddc45bd` (pre-patch baseline).
+
 ## Native pending cleanup (plugin 0.2.1)
 
 Saved/rejected decisions are committed to SQLite before invoking public
@@ -69,4 +93,4 @@ entry tests. Real changed-target refusal tests remain, for both targets.
 No public whole-file CAS or transactional pending-consume+apply API is assumed.
 This plugin never borrows private native locks, patches core, changes prompt cache,
 or claims exactly-once remote messaging. The README documents crash quarantine,
-retained pending audit records, text-pin ABA limits and manual reconciliation.
+SQLite audit records, text-pin ABA limits and manual reconciliation.

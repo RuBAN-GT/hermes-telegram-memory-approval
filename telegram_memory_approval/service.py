@@ -40,7 +40,7 @@ class Service:
             try:
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
                 # No buttons on text chunks. A separate final message owns exactly two.
-                for text in parts(validate(record)):
+                for text in parts(validate(record), pending_id=record['id'], origin=record.get('origin')):
                     await self.bot.send_message(chat_id=self.chat, message_thread_id=self.topic,
                         text=text, parse_mode=None, disable_notification=True)
                 keyboard = InlineKeyboardMarkup([[

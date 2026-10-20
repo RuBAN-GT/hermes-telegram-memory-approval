@@ -1,5 +1,5 @@
 """Plain exact entry text; conservative UTF-16 limits, no Markdown parser."""
-def parts(payload):
+def parts(payload, *, pending_id=None, origin=None):
     if payload["action"] == "batch":
         ops = payload["operations"]
         text = f"Атомарный пакет: {len(ops)} изменений. Решение применяется ко всему пакету.\n"
@@ -7,6 +7,9 @@ def parts(payload):
             text += f"\nОперация {index}/{len(ops)}\n" + _entry_text(op) + "\n"
     else:
         text = _entry_text(payload)
+    if pending_id is not None:
+        source = {'foreground': 'основной ход', 'background_review': 'фоновый review'}.get(origin, 'не указан')
+        text = f"Предложение: {pending_id}\nИсточник: {source}\n\n" + text
     chunks, chunk, units = [], '', 0
     for char in text:
         size = 2 if ord(char) > 0xffff else 1
