@@ -1,5 +1,29 @@
 # Compatibility evidence and contract
 
+## Current API check (2026-10-30, plugin 0.2.3)
+
+Hermes revision deployed for Tyrion:
+`ef35e8b9e1a8bc7f0efb50e4f2d68f1ec052f6a8`.
+The model-facing memory schema now requires `target` and `operations[]`, even
+for single changes. Native staging still produces `action: batch` with pinned
+operations; public pending APIs and `apply_memory_pending` remain compatible.
+No transport implementation change or private API workaround is needed.
+
+Hermes now allows deliberate deletion of the last entry via a one-item remove
+batch. Regression tests exercise the real model-facing call, native staging,
+Telegram delivery and owner save/reject for both memory targets. Another pair
+of regressions lowers the configured character budget after card delivery and
+verifies that approval is refused without writing or discarding the proposal.
+Replay continues to use a fresh `load_on_disk_store`, preserving current native
+limits, pins, drift protection and atomic batch semantics.
+
+Telegram factory registration, handler routing and PluginContext task/unload
+APIs remain compatible. Tests use fake network I/O, not a live Telegram bot.
+
+Verification: **101 passed**, no skips or expected failures, on this exact
+revision with Python 3.11 and PTB 22.8. Wheel and source distribution builds
+succeeded. No server deployment or gateway restart was performed.
+
 ## Current API check (2026-10-20, plugin 0.2.2)
 
 Hermes HEAD checked: `ce28ca328d3b85ac8663e602136eb69b027cd056`.

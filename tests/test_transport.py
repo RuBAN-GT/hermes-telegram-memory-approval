@@ -334,6 +334,54 @@ def test_one_entry_batch_native_replay(setup, action):
     assert disk_entries('memory') == (['Unrelated remaining entry'] if action == 'remove' else ['Batch single entry'])
 
 
+@pytest.mark.parametrize('target', ['memory', 'user'])
+@pytest.mark.parametrize('decision', ['save', 'reject'])
+def test_operations_only_delete_last_entry_waits_for_owner(setup, target, decision):
+    """Current Hermes advertises operations[] even for a deliberate final delete."""
+    from tools.memory_tool import memory_tool, load_on_disk_store
+    service, bot, store = setup
+    original = 'The only pinned entry.'
+    assert load_on_disk_store().add(target, original)['success']
+    result = json.loads(memory_tool(target=target,
+        operations=[{'action': 'remove', 'old_text': original}],
+        store=load_on_disk_store()))
+    record = service.bridge.get(result['pending_id'])
+    assert record['payload']['action'] == 'batch'
+    assert record['payload']['operations'][0]['matched_entry'] == original
+    assert disk_entries(target) == [original]
+    asyncio.run(service.scan())
+    assert len(bot.messages) == 2
+    assert original in bot.messages[0]['text']
+    assert disk_entries(target) == [original]
+    click(service, Query(token(store), action=decision))
+    assert store.get(token(store))['state'] == ('saved' if decision == 'save' else 'rejected')
+    assert disk_entries(target) == ([] if decision == 'save' else [original])
+    assert service.bridge.get(record['id']) is None
+    asyncio.run(service.scan())
+    assert len(bot.messages) == 2
+
+
+@pytest.mark.parametrize('target', ['memory', 'user'])
+def test_operations_only_add_rechecks_configured_budget_at_approval(setup, profile, target):
+    from tools.memory_tool import memory_tool, load_on_disk_store
+    service, bot, store = setup
+    content = 'This proposal fits only the original configured budget.'
+    result = json.loads(memory_tool(target=target,
+        operations=[{'action': 'add', 'content': content}],
+        store=load_on_disk_store()))
+    asyncio.run(service.scan())
+    assert content in bot.messages[0]['text']
+    # Operator lowers the cap after delivery. Replay must use a fresh configured
+    # store, not the staging store or an uncapped default MemoryStore.
+    config = profile / 'config.yaml'
+    limit = 'user_char_limit' if target == 'user' else 'memory_char_limit'
+    config.write_text(config.read_text().replace(f'{limit}: 20000', f'{limit}: 10'))
+    click(service, Query(token(store)))
+    assert store.get(token(store))['state'] == 'refused'
+    assert disk_entries(target) == []
+    assert service.bridge.get(result['pending_id']) is not None
+
+
 def test_unready_transport_does_not_claim_pending(setup):
     service, bot, store = setup
     stage()

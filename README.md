@@ -29,8 +29,9 @@ client, core patches, private memory locks, or prompt-cache mutation.
 ## Compatibility and installation
 
 Verified against current Hermes source revision
-`ce28ca328d3b85ac8663e602136eb69b027cd056` (2026-10-20), Python 3.11 and PTB 22.8.
-Also tested against `802e0b1daebad8a60da496db1a070fe13ddc45bd` (before span patches).
+`ef35e8b9e1a8bc7f0efb50e4f2d68f1ec052f6a8` (2026-10-30), Python 3.11 and PTB 22.8.
+Earlier releases were also tested against `ce28ca328d3b85ac8663e602136eb69b027cd056`
+and `802e0b1daebad8a60da496db1a070fe13ddc45bd` (before span patches).
 Requires Unix `fcntl`, native pending/pinned replay APIs, an **in-process** plugin
 runtime and Telegram gateway. Host-isolated plugins cannot receive the native PTB
 Application. This transport covers only native memory, not OpenViking, skills,
@@ -97,6 +98,11 @@ hermes gateway status
 hermes plugins list
 ```
 
+Version **0.2.3** verifies compatibility with Hermes as of 2026-10-30. Hermes now
+advertises only `target` and `operations[]`, including one-item changes. The native
+pending/replay format remains compatible; no transport API migration is needed.
+New regressions cover owner-approved/rejected deletion of the last entry through a
+one-item batch and rechecking configured character limits at approval time.
 Version **0.2.2** verifies compatibility with Hermes as of 2026-10-20 and adds
 the native pending ID and origin (foreground/background review) to each proposal's
 text. Different IDs distinguish separate native proposals, not repeated delivery
@@ -113,7 +119,7 @@ normal service manager to stop/start it instead. A full process restart is requi
 Existing settings and the SQLite ledger are retained; reinstallation or clearing
 pending records is not needed. Previously unsupported valid proposals will be
 picked up on the next scan. Already decided/uncertain records are not resent.
-Confirm version **0.2.2** in `hermes plugins list`. New cards include the ID/source;
+Confirm version **0.2.3** in `hermes plugins list`. New cards include the ID/source;
 existing active cards keep their original text and continue to work.
 
 ### Check background self-improvement
@@ -233,8 +239,8 @@ non-owner/cross-topic/wrong-message rejection, callback repeat, uncertain sends,
 restart recovery, SQLite claims and actual factory registration/cleanup.
 Tests also exercise the real Telegram adapter and PTB first-match routing (with
 fake Application/I/O), including late plugin loading and unrelated core buttons.
-Verified locally on current Hermes: **95 tests passed**, with no skips or expected
-failures. On the pre-patch baseline: **81 passed, 14 skipped** (native span-patch
-tests only). Both wheel and source distribution builds succeeded.
+Verified locally on current Hermes: **101 tests passed**, with no skips or expected
+failures. Release 0.2.2 on the pre-patch baseline: **81 passed, 14 skipped** (native
+span-patch tests only). Both wheel and source distribution builds succeeded.
 Live gateway installation/network delivery is intentionally **not** claimed tested.
 See [compatibility evidence](docs/FEASIBILITY.md). MIT licensed.
